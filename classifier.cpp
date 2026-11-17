@@ -157,22 +157,57 @@ public:
     return {best_label, best_score};
   }
 
+  // MODIFIES: cout
+  // EFFECTS:  Prints the vocabulary size, classes, and classifier
+  //           parameters for train-only mode.
+  void print_train_info() const {
+    cout << "vocabulary size = " << get_words_size() << "\n\n";
+    cout << "classes:\n";
+    print_classes();
+    cout << "classifier parameters:\n";
+    print_classifier_parameters();
+    cout << "\n";
+  }
+
 };
 
 
+// REQUIRES: classifier has been trained, csvin_test is open
+// MODIFIES: cout
+// EFFECTS:  Predicts a label for each test post, then prints the
+//           results and overall performance.
+void run_tests(const Classifier &classifier, csvstream &csvin_test) {
+  cout << "\ntest data:\n";
+  map<string, string> row;
+  int performance_counter = 0;
+  int test_counter = 0;
+  while (csvin_test >> row) {
+    pair<string, double> prediction = classifier.predict(row["content"]);
+    cout << "  correct = " << row["tag"] << ", predicted = " << prediction.first
+         << ", log-probability score = " << prediction.second << "\n"
+         << "  content = " << row["content"] << "\n\n";
+    ++test_counter;
+    if (row["tag"] == prediction.first) {
+      ++performance_counter;
+    }
+  }
+  cout << "performance: " << performance_counter << " / "
+       << test_counter << " posts predicted correctly\n";
+}
+
 int main(int argc, char *argv[]) {
-
   cout.precision(3);
-  bool train_check = (argc == 2);
-  Classifier classifier;
 
-  if (argc < 2 || argc > 3) {
-    cout << "Usage: classifier.exe TRAIN_FILE [TEST_FILE]" << endl;
+  if (argc != 2 && argc != 3) {
+    cout << "Usage: classifier.exe TRAIN_FILE [TEST_FILE]\n";
     return 1;
   }
-  string filename = argv[1];
 
-  if (argc == 3) {
+  bool train_only = (argc == 2);
+  string train_file = argv[1];
+
+  // Check the test file before printing anything
+  if (!train_only) {
     try {
       csvstream test_check(argv[2]);
     } catch (const csvstream_exception &e) {
@@ -180,72 +215,33 @@ int main(int argc, char *argv[]) {
       return 1;
     }
   }
-  
+
+  Classifier classifier;
   try {
-    csvstream csvin(filename); // opens the csvstream
-    if (argc == 2) {
+    csvstream csvin(train_file);
+    if (train_only) {
       cout << "training data:\n";
     }
-    classifier.train(csvin, train_check);
-  } catch(const csvstream_exception &e) {
-      cout << "Error opening file: " << filename << endl;
-      return 1;
+    classifier.train(csvin, train_only);
+  } catch (const csvstream_exception &e) {
+    cout << "Error opening file: " << train_file << "\n";
+    return 1;
   }
-  
 
- 
- 
-  
   cout << "trained on " << classifier.get_rowCount() << " examples\n";
 
-  if (train_check == true) {
-    cout << "vocabulary size = " << classifier.get_words_size() << endl;
-
-    cout << endl << "classes:\n";
-
-    classifier.print_classes();
-
-    cout << "classifier parameters:\n";
-
-    classifier.print_classifier_parameters();
-    cout << endl;
+  if (train_only) {
+    classifier.print_train_info();
+    return 0;
   }
 
-  if (argc == 3) {
-
-    string filename2 = argv[2];
-    try{
-      csvstream csvin_test(filename2);
-
-      cout << "\n" << "test data:\n";
-
-      map<string, string> row;
-
-      int performance_counter = 0;
-      int test_counter = 0;
-      while(csvin_test >> row) {
-        pair<string, double> prediction = classifier.predict(row["content"]);
-        cout << "  correct = " << row["tag"] << ", predicted = " << prediction.first 
-        << ", log-probability score = " << prediction.second << "\n" 
-        << "  content = " << row["content"]
-        << "\n\n";
-
-        ++test_counter;
-
-        if (row["tag"] == prediction.first) {
-          ++performance_counter;
-        }
-      }
-      cout << "performance: " << performance_counter << " / " 
-      << test_counter << " posts predicted correctly\n";
-
-    } catch(const csvstream_exception &e) {
-
-      cout << "Error opening file: " << filename2 << endl;
-      return 1;
-
-    }
+  string test_file = argv[2];
+  try {
+    csvstream csvin_test(test_file);
+    run_tests(classifier, csvin_test);
+  } catch (const csvstream_exception &e) {
+    cout << "Error opening file: " << test_file << "\n";
+    return 1;
   }
-
-
+  return 0;
 }
