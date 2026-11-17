@@ -18,68 +18,143 @@ set<string> unique_words(const string &str) {
   return words;
 }
 
+// A Naive Bayes classifier that learns from labeled posts and
+// predicts the most likely label for new posts using a
+// bag-of-words model.
 class Classifier {
 
 private:
-  int rowCount = 0;
+  int rowCount = 0;  // total number of training posts
   set<string> words;
-  map<string, string> row;
   map<string, int> labelsCount;
   map<string, int> word_counts;
   map<string, map<string, int>> labels_word_counts;
 
 public:
 
-  void train(csvstream &csvin) {
+  // REQUIRES: csvin is open and has "tag" and "content" columns
+  // MODIFIES: this classifier's counts, cout (if print_data is true)
+  // EFFECTS:  Reads every post from csvin and records the counts
+  //           needed for prediction. If print_data is true, prints
+  //           each post's label and content.
+  void train(csvstream &csvin, bool print_data) {
+
+    map<string, string> row;
 
     while (csvin >> row) {
+      if (print_data) {
           cout << "  label = " << row["tag"] 
           << ", content = " << row["content"] << "\n";
-          rowCount++;
+      }
+        rowCount++;
 
-          set<string> currentWords = unique_words(row["content"]);
+        set<string> currentWords = unique_words(row["content"]);
 
-          for (const string &word : currentWords) {
-              words.insert(word);
-              ++word_counts[word];
-              ++labels_word_counts[row["tag"]][word];
+        for (const string &word : currentWords) {
+            words.insert(word);
+            ++word_counts[word];
+            ++labels_word_counts[row["tag"]][word];
 
-          }
+        }
 
-          ++labelsCount[row["tag"]];
+        ++labelsCount[row["tag"]];
 
       }
 
   }
 
-  int get_words_size() {
+  // REQUIRES: label was seen during training
+  // EFFECTS:  Returns the log-likelihood of word given label.
+  //           Uses the overall word frequency if word never appeared
+  //           with label, and 1 / total posts if word never appeared
+  //           in training at all.
+  double log_likelihood(const string &label, 
+                              const string &word) const 
+  {
+    const map<string, int> &label_words = labels_word_counts.at(label);
+
+    if (label_words.find(word) != label_words.end()) {
+
+      double wordCount = labels_word_counts.at(label).at(word);
+      return std::log(wordCount / labelsCount.at(label));
+
+    } else if (word_counts.find(word) != word_counts.end()) {
+
+        double overallWordCount = word_counts.at(word);
+        return std::log(overallWordCount / rowCount);
+
+    } else {
+
+        return std::log(1.0 / rowCount);
+    }
+  }
+
+  // REQUIRES: label was seen during training
+  // EFFECTS:  Returns ln(posts with label / total posts).
+  double log_prior(const string& label) const {
+    double dblRowCount = rowCount;
+    return std::log(labelsCount.at(label) / dblRowCount);
+  }
+
+  // EFFECTS: Returns the number of unique words in the training data.
+  int get_words_size() const {
     return words.size();
   }
 
-  int get_rowCount() {
+  // EFFECTS: Returns the number of training posts.
+  int get_rowCount() const {
     return rowCount;
   }
 
+  // MODIFIES: cout
+  // EFFECTS:  Prints each label with its post count and log-prior,
+  //           in alphabetical order.
   void print_classes() const {
-    for (const auto &m : labelsCount) {
-      cout << "  " << m.first << ", " << m.second << " examples, " 
+    for (const auto &label_map : labelsCount) {
+      cout << "  " << label_map.first << ", " 
+      << label_map.second << " examples, " 
       << "log-prior = ";
-      double altCount = rowCount;
-      cout << std::log(m.second / altCount) << endl;
+      double dblRowCount = rowCount;
+      cout << std::log(label_map.second / dblRowCount) << endl;
     }
   }
 
+  // MODIFIES: cout
+  // EFFECTS:  Prints each label and word pair with its count and
+  //           log-likelihood, in alphabetical order.
   void print_classifier_parameters() const {
-    for (const auto &m : labels_word_counts) {
-      for (const auto &m2 : m.second) {
-        cout << "  " << m.first << ":";
-        cout << m2.first << ", " << "count = " << m2.second 
+    for (const auto &label : labels_word_counts) {
+      for (const auto &word : label.second) {
+        cout << "  " << label.first << ":";
+        cout << word.first << ", " << "count = " << word.second 
         << ", log-likelihood = ";
-        double altCount2 = m2.second;
-        cout << std::log(altCount2 / labelsCount.at(m.first)) << endl;
+        cout << log_likelihood(label.first, word.first) << endl;
 
       }
     }
+  }
+
+  // REQUIRES: train() has been called
+  // EFFECTS:  Returns the label with the highest log-probability
+  //           score for content, along with that score. Ties go to
+  //           the alphabetically first label.
+  pair<string, double> predict(const string& content) const {
+
+    set<string> words = unique_words(content);
+    string best_label = "";
+    double best_score = 0;
+
+    for (const auto &label_entry : labelsCount) {
+      double score = log_prior(label_entry.first);
+      for (const string &word : words) {
+        score += log_likelihood(label_entry.first, word);
+      }
+      if (best_label == "" || score > best_score) {
+        best_label = label_entry.first;
+        best_score = score;
+      }
+    }
+    return {best_label, best_score};
   }
 
 };
@@ -88,26 +163,89 @@ public:
 int main(int argc, char *argv[]) {
 
   cout.precision(3);
-  string filename = argv[1];
-  csvstream csvin(filename); // opens the csvstream
-
+  bool train_check = (argc == 2);
   Classifier classifier;
 
-  cout << "training data:\n";
+  if (argc < 2 || argc > 3) {
+    cout << "Usage: classifier.exe TRAIN_FILE [TEST_FILE]" << endl;
+    return 1;
+  }
+  string filename = argv[1];
 
-  classifier.train(csvin);
+  if (argc == 3) {
+    try {
+      csvstream test_check(argv[2]);
+    } catch (const csvstream_exception &e) {
+      cout << "Error opening file: " << argv[2] << "\n";
+      return 1;
+    }
+  }
+  
+  try {
+    csvstream csvin(filename); // opens the csvstream
+    if (argc == 2) {
+      cout << "training data:\n";
+    }
+    classifier.train(csvin, train_check);
+  } catch(const csvstream_exception &e) {
+      cout << "Error opening file: " << filename << endl;
+      return 1;
+  }
+  
+
+ 
+ 
   
   cout << "trained on " << classifier.get_rowCount() << " examples\n";
-  cout << "vocabulary size = " << classifier.get_words_size() << endl;
 
-  cout << endl << "classes:\n";
-  classifier.print_classes();
+  if (train_check == true) {
+    cout << "vocabulary size = " << classifier.get_words_size() << endl;
 
-  cout << "classifier parameters:\n";
+    cout << endl << "classes:\n";
 
-  classifier.print_classifier_parameters();
-  cout << endl;
+    classifier.print_classes();
 
+    cout << "classifier parameters:\n";
+
+    classifier.print_classifier_parameters();
+    cout << endl;
+  }
+
+  if (argc == 3) {
+
+    string filename2 = argv[2];
+    try{
+      csvstream csvin_test(filename2);
+
+      cout << "\n" << "test data:\n";
+
+      map<string, string> row;
+
+      int performance_counter = 0;
+      int test_counter = 0;
+      while(csvin_test >> row) {
+        pair<string, double> prediction = classifier.predict(row["content"]);
+        cout << "  correct = " << row["tag"] << ", predicted = " << prediction.first 
+        << ", log-probability score = " << prediction.second << "\n" 
+        << "  content = " << row["content"]
+        << "\n\n";
+
+        ++test_counter;
+
+        if (row["tag"] == prediction.first) {
+          ++performance_counter;
+        }
+      }
+      cout << "performance: " << performance_counter << " / " 
+      << test_counter << " posts predicted correctly\n";
+
+    } catch(const csvstream_exception &e) {
+
+      cout << "Error opening file: " << filename2 << endl;
+      return 1;
+
+    }
+  }
 
 
 }
